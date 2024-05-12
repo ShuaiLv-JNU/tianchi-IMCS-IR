@@ -37,10 +37,14 @@ def init_logger():
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                         datefmt='%m/%d/%Y %H:%M:%S',
                         level=logging.INFO)
-
+"""
+构建instance类的词表
+"""
 def build_vocab(instances):
     return Vocabulary.from_instances(instances)
-
+"""
+通过IntentionLabelTagger构建模型
+"""
 def build_model(vocab: Vocabulary,
                 transformer_load_path: str, 
                 pretrained_hidden_size: int,
@@ -60,7 +64,9 @@ def build_model(vocab: Vocabulary,
                                 # action_weights=action_weights, 
                                 # intent_weights=intent_weights
                                 )
-
+"""
+Trainer
+"""
 def build_trainer(model: Model,
                   train_loader: DataLoader,
                   dev_loader: DataLoader,
@@ -72,19 +78,24 @@ def build_trainer(model: Model,
     
     no_bigger = ["dialogue_encoder", "crf_act", "crf_int",
                  "act_decoder", "intent_decoder"]
-    
     parameter_groups = [
+    # 除了 no_bigger 中指定的模块以外的所有参数，不对这些参数应用权重衰减
+    # weight_decay为0.0可以最小化正则化的影响,使BERT的权重更多地保持原有的值
     {
      "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_bigger)],
      "weight_decay": 0.0,
     },
+    # no_bigger中指定的模块的参数使用较大的学习率，在当前任务上从头开始训练的,使用较大的学习率可以加速其训练和收敛
+    # 其他模块（BERT）在微调时使用较小的学习率可以防止过大的参数更新破坏已学到的知识
     {
      "params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_bigger)],
      "lr": 0.0001
     }
     ]
+    #
     optimizer = AdamW(parameter_groups, lr=1e-5, eps=1e-8)
-    # optimizer = AdamW(parameter_groups, lr=1e-5, eps=1e-8, weight_decay=0.01)  # 添加weight_decay参数
+    # 动态调整学习率: warmup_steps预热步数，在预热阶段，学习率会从 0 线性增加到初始学习率
+    # 可以在训练初期让模型适应数据，避免过大的学习率导致不稳定
     lrschedule = LinearWithWarmup(optimizer=optimizer,
                                   num_epochs=num_epochs,
                                   num_steps_per_epoch=len(train_loader),
@@ -110,15 +121,18 @@ def build_trainer(model: Model,
     
     return trainer
 
-
+"""
+数据增强：随机交换相邻句子的逻辑
+"""
 def swap_sentences(dialogue, speaker_ids, intentions, actions):
-    # 实现随机交换相邻句子的逻辑
+    # 创建副本
     swapped_dialogue = dialogue[:]
     swapped_speaker_ids = speaker_ids[:]
     swapped_intentions = intentions[:]
     swapped_actions = actions[:]
 
     if len(dialogue) > 1:
+        # 交换1到min(3, len(dialogue)-1)之间
         num_swaps = random.randint(1, min(3, len(dialogue) - 1))
         for _ in range(num_swaps):
             idx1 = random.randint(0, len(dialogue) - 2)
@@ -130,9 +144,10 @@ def swap_sentences(dialogue, speaker_ids, intentions, actions):
             swapped_actions[idx1], swapped_actions[idx2] = swapped_actions[idx2], swapped_actions[idx1]
 
     return swapped_dialogue, swapped_speaker_ids, swapped_intentions, swapped_actions
-
+"""
+随机插入无意义句子的逻辑
+"""
 def insert_meaningless_sentence(dialogue, speaker_ids, intentions, actions):
-    # 实现随机插入无意义句子的逻辑
     inserted_dialogue = dialogue[:]
     inserted_speaker_ids = speaker_ids[:]
     inserted_intentions = intentions[:]
@@ -155,9 +170,10 @@ def insert_meaningless_sentence(dialogue, speaker_ids, intentions, actions):
         inserted_actions.insert(insert_pos, previous_action)
 
     return inserted_dialogue, inserted_speaker_ids, inserted_intentions, inserted_actions
-
+"""
+随机mask
+"""
 def mask_and_predict(utterance, tokenizer, mask_prob=0.15):
-    # 实现随机mask的逻辑
     utterance_tokens = tokenizer.convert_ids_to_tokens(utterance)[1:-1]  # 去除 [CLS] 和 [SEP] token
     masked_utterance = ['[CLS]']
 
@@ -185,8 +201,6 @@ def run_training_loop(config):
 
     train_path = config.train_file
     dev_path = config.dev_file
-
-
 
     train_data = list(train_dataset_reader.read(train_path))
     dev_data = list(dev_dataset_reader.read(dev_path))
